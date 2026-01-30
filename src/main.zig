@@ -7,6 +7,7 @@ const stdin = root.stdin;
 const stdout = root.stdout;
 const readKey = root.readKey;
 const setRawMode = root.setRawMode;
+const Screen = root.Screen;
 
 pub const Mode = enum {
     NOR,
@@ -46,20 +47,26 @@ pub const User = struct {
 pub fn main() !void {
     try setRawMode(.on);
 
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    const allocator = gpa.allocator();
+    var screen = try root.Screen.init(allocator);
+
     var running: bool = true;
     var user: User = .{ .currentMode = Mode.NOR, .showWelcome = true, .pos_x = 0, .pos_y = 0 };
     while (running) {
         const key = try readKey();
-        try draw.drawStatusBar(stdout, user.currentMode, "test.txt", 10, 10, 100);
-        try stdout.flush();
+        try draw.drawStatusBar(&screen, user);
+        // try screen.out.sync(); WARN Error From This Line!
         if (user.currentMode == Mode.NOR and key == 'q') {
             running = false;
             try setRawMode(.off);
             break;
         } else if (user.currentMode == Mode.NOR and key == 'i') {
             user.currentMode = Mode.INS;
+            try screen.refresh(user);
         } else if (user.currentMode == Mode.NOR and key == 'v') {
             user.currentMode = Mode.SEL;
+            try screen.refresh(user);
         }
 
         if (key == '\x1b') {
@@ -87,7 +94,9 @@ pub fn main() !void {
                         'B' => try user.moveDown(),
                         'C' => try user.moveRight(),
                         'D' => try user.moveLeft(),
-                        else => {},
+                        else => {
+                            try screen.refresh(user);
+                        },
                     }
                 }
             }

@@ -19,7 +19,7 @@ pub const Screen = struct {
         var self = Screen{
             .width = 0,
             .height = 0,
-            .out = std.io.getStdOut(),
+            .out = std.fs.File.stdout(),
             .allocator = allocator,
         };
         try self.updateSize();
@@ -27,11 +27,43 @@ pub const Screen = struct {
     }
 
     pub fn updateSize(self: *Screen) !void {
-        _ = self;
-        // Here you'd use your getTerminalSize implementation
-        // For example, using ioctl on Linux/macOS
-        // self.width = ...
-        // self.height = ...
+        // Try to get size from environment variables
+        if (std.process.getEnvVarOwned(self.allocator, "COLUMNS")) |cols_str| {
+            self.width = @intCast(std.fmt.parseInt(usize, cols_str, 10) catch 80);
+            self.allocator.free(cols_str);
+        } else |_| {
+            self.width = 80;
+        }
+
+        if (std.process.getEnvVarOwned(self.allocator, "LINES")) |lines_str| {
+            self.height = @intCast(std.fmt.parseInt(usize, lines_str, 10) catch 24);
+            self.allocator.free(lines_str);
+        } else |_| {
+            self.height = 24;
+        }
+    }
+
+    pub fn drawRows(self: *Screen) !void {
+        var y: usize = 0;
+        while (y < self.height) : (y += 1) {
+            try self.out.writeAll("~");
+
+            // Fill the rest of the line with spaces
+            var x: usize = 1;
+            while (x < self.width) : (x += 1) {
+                try self.out.writeAll(" ");
+            }
+
+            // Move to next line
+            try self.out.writeAll("\r\n");
+        }
+    }
+
+    pub fn drawCols(self: *Screen) !void {
+        var x: usize = 0;
+        while (x < self.width) : (x += 1) {
+            try self.out.writeAll("|");
+        }
     }
 
     pub fn refresh(self: *Screen, user: anytype) !void {
@@ -45,34 +77,18 @@ pub const Screen = struct {
         try self.drawRows();
 
         // 4. Draw the status bar at the bottom
-        try self.drawStatusBar(user);
+        const drawUi = @import("drawUi.zig");
+        try drawUi.drawStatusBar(self, user);
 
         // 5. Move cursor back to user's position
         var buf: [32]u8 = undefined;
-        const move_cmd = try std.fmt.bufPrint(&buf, "\x1b[{};{}H", .{ user.y + 1, user.x + 1 });
+        const move_cmd = try std.fmt.bufPrint(&buf, "\x1b[{};{}H", .{ user.pos_y + 1, user.pos_x + 1 });
         try self.out.writeAll(move_cmd);
 
         // 6. Show the cursor again
         try self.out.writeAll("\x1b[?25h");
     }
 };
-// Get terminal dimensions with fallback
-pub fn getTerminalSize() Screen {
-    var screen = Screen{ .cols = 80, .rows = 24 };
-
-    // Try to get size from environment variables
-    if (std.process.getEnvVarOwned(std.heap.page_allocator, "COLUMNS")) |cols_str| {
-        screen.cols = std.fmt.parseInt(usize, cols_str, 10) catch screen.cols;
-        std.heap.page_allocator.free(cols_str);
-    } else |_| {}
-
-    if (std.process.getEnvVarOwned(std.heap.page_allocator, "LINES")) |lines_str| {
-        screen.rows = std.fmt.parseInt(usize, lines_str, 10) catch screen.rows;
-        std.heap.page_allocator.free(lines_str);
-    } else |_| {}
-
-    return screen;
-}
 
 pub fn setRawMode(state: enum(u1) { on, off }) !void {
     var termios = try std.posix.tcgetattr(0);
@@ -86,3 +102,60 @@ pub fn readKey() !u8 {
     if (bytes_read == 0) return error.EndOfFile;
     return bytes_read;
 }
+
+pub const Cursor = struct {
+    x: usize,
+    y: usize,
+    visible: bool,
+
+    pub fn init(x: usize, y: usize) Cursor {
+        return Cursor{
+            .x = x,
+            .y = y,
+            .visible = true,
+        };
+    }
+
+    pub fn moveTo(self: *Cursor, x: usize, y: usize) !void {
+        self.x = x;
+        self.y = y;
+        try stdout.print("\x1b[{};{}H", .{ y + 1, x + 1 });
+        try stdout.flush();
+    }
+
+    pub fn moveRelative(self: *Cursor, dx: i32, dy: i32) !void {
+        const new_x = @as(i32, @intCast(self.x)) + dx;
+        const new_y = @as(i32, @intCast(self.y)) + dy;
+
+        if (new_x >= 0 and new_y >= 0) {
+            const term_size = try getTermSize(0);
+            if (new_x < term_size.width and new_y < term_size.height) {
+                try self.moveTo(@intCast(new_x), @intCast(new_y));
+            }
+        }
+    }
+
+    pub fn hide(self: *Cursor) !void {
+        self.visible = false;
+        try stdout.print("\x1b[?25l", .{});
+        try stdout.flush();
+    }
+
+    pub fn show(self: *Cursor) !void {
+        self.visible = true;
+        try stdout.print("\x1b[?25h", .{});
+        try stdout.flush();
+    }
+
+    pub fn save(self: *Cursor) !void {
+        _ = self;
+        try stdout.print("\x1b[s", .{});
+        try stdout.flush();
+    }
+
+    pub fn restore(self: *Cursor) !void {
+        _ = self;
+        try stdout.print("\x1b[u", .{});
+        try stdout.flush();
+    }
+};
