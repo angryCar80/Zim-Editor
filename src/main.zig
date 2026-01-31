@@ -68,12 +68,26 @@ pub const User = struct {
     pub fn moveUp(self: *User) !void {
         if (self.y > 0) {
             self.y -= 1;
+            // Adjust x position if new line is shorter
+            if (self.buffer) |buf| {
+                if (buf.getLine(self.y)) |line| {
+                    if (self.x > line.len) {
+                        self.x = line.len;
+                    }
+                }
+            }
         }
     }
     pub fn moveDown(self: *User) !void {
         if (self.buffer) |buf| {
             if (self.y < buf.getLineCount() - 1) {
                 self.y += 1;
+                // Adjust x position if new line is shorter
+                if (buf.getLine(self.y)) |line| {
+                    if (self.x > line.len) {
+                        self.x = line.len;
+                    }
+                }
             }
         }
     }
@@ -82,6 +96,10 @@ pub const User = struct {
             if (buf.getLine(self.y)) |line| {
                 if (self.x < line.len) {
                     self.x += 1;
+                } else if (self.x == line.len and self.y < buf.getLineCount() - 1) {
+                    // Move to next line if at end of current line
+                    self.y += 1;
+                    self.x = 0;
                 }
             }
         }
@@ -89,6 +107,14 @@ pub const User = struct {
     pub fn moveLeft(self: *User) !void {
         if (self.x > 0) {
             self.x -= 1;
+        } else if (self.y > 0) {
+            // Move to end of previous line if at start of current line
+            if (self.buffer) |buf| {
+                if (buf.getLine(self.y - 1)) |line| {
+                    self.y -= 1;
+                    self.x = line.len;
+                }
+            }
         }
     }
 };
@@ -124,10 +150,17 @@ pub fn main() !void {
         cursor.show() catch {};
     }
 
+    // Initial refresh to show file content
+    try screen.refresh(user);
+    try draw.drawStatusBar(&screen, user);
+
     var running: bool = true;
     while (running) {
         try stdout.flush();
         const key = try readKey();
+
+        // Update visual cursor position to match user position
+        try cursor.moveTo(user.x, user.y);
 
         try screen.refresh(user);
         try draw.drawStatusBar(&screen, user);
@@ -138,12 +171,16 @@ pub fn main() !void {
             break;
         } else if (user.currentMode == Mode.NOR and key == 'i') {
             user.currentMode = Mode.INS;
+            try screen.refresh(user);
         } else if (user.currentMode == Mode.NOR and key == 'v') {
             user.currentMode = Mode.SEL;
+            try screen.refresh(user);
         } else if (user.currentMode == Mode.NOR and key == 'o') {
             user.currentMode = Mode.COM;
+            try screen.refresh(user);
         } else if (user.currentMode == Mode.COM and key == '\n') {
             user.currentMode = .NOR;
+            try screen.refresh(user);
         }
 
         if (key == '\x1b') {
@@ -161,20 +198,42 @@ pub fn main() !void {
             if (ready == 0) {
                 // No more bytes waiting? This was a real ESC key press!
                 user.currentMode = .NOR;
+                try setRawMode(.on);
+                try screen.refresh(user);
             } else {
                 // More bytes are waiting! It's likely an arrow key sequence.
                 const second_byte = try readKey();
                 if (second_byte == '[') {
                     const third_byte = try readKey();
                     switch (third_byte) {
-                        'A' => try user.moveUp(),
-                        'B' => try user.moveDown(),
-                        'C' => try user.moveRight(),
-                        'D' => try user.moveLeft(),
+                        'A' => {
+                            try user.moveUp();
+                            try screen.refresh(user);
+                        },
+                        'B' => {
+                            try user.moveDown();
+                            try screen.refresh(user);
+                        },
+                        'C' => {
+                            try user.moveRight();
+                            try screen.refresh(user);
+                        },
+                        'D' => {
+                            try user.moveLeft();
+                            try screen.refresh(user);
+                        },
                         else => {},
                     }
                 }
             }
+        } else if (user.currentMode == .NOR and key == 'j') {
+            try user.moveDown();
+        } else if (user.currentMode == .NOR and key == 'k') {
+            try user.moveUp();
+        } else if (user.currentMode == .NOR and key == 'l') {
+            try user.moveLeft();
+        } else if (user.currentMode == .NOR and key == 'h') {
+            try user.moveRight();
         }
     }
 }

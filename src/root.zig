@@ -148,8 +148,12 @@ pub const Screen = struct {
         try drawUi.drawStatusBar(self, user);
 
         // 6. Move cursor back to user's position
+        // Ensure cursor stays within screen bounds
+        const cursor_y = @min(user.y + 1, self.height - 1);
+        const cursor_x = @min(user.x + 1, self.width - 1);
+
         var buf: [32]u8 = undefined;
-        const move_cmd = try std.fmt.bufPrint(&buf, "\x1b[{};{}H", .{ user.y + 1, user.x + 1 });
+        const move_cmd = try std.fmt.bufPrint(&buf, "\x1b[{};{}H", .{ cursor_y, cursor_x });
         try self.out.writeAll(move_cmd);
 
         // 7. Show the cursor again
