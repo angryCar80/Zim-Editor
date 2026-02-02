@@ -1,7 +1,7 @@
 const std = @import("std");
 
 const root = @import("root.zig"); // the core lib for the project
-const draw = @import("drawUi.zig");
+const draw = @import("drawUi.zig"); // Drawing the user bar
 const file = @import("files.zig");
 // Simple Imports
 const stdin = root.stdin;
@@ -10,7 +10,6 @@ const readKey = root.readKey;
 const setRawMode = root.setRawMode;
 const clear = root.clear;
 const Screen = root.Screen;
-const Cursor = root.Cursor;
 
 pub const Mode = enum {
     NOR,
@@ -117,6 +116,11 @@ pub const User = struct {
             }
         }
     }
+
+    pub fn moveToStart(self: *User) !void {
+        self.x = 0;
+        self.y = 0;
+    }
 };
 
 const term_size = root.getTermSize(0);
@@ -140,47 +144,33 @@ pub fn main() !void {
     // Load file from command line argument or default to test.txt
     if (args.len > 1) {
         try user.openFile(allocator, args[1]);
+        try user.moveToStart();
     } else {
         try user.openFile(allocator, "src/test.txt");
     }
 
-    var cursor = Cursor.init(user.x, user.y);
-    try cursor.hide();
-    defer {
-        cursor.show() catch {};
-    }
-
-    // Initial refresh to show file content
+    // Initial refresh to show file content and position cursor
     try screen.refresh(user);
-    try draw.drawStatusBar(&screen, user);
 
     var running: bool = true;
     while (running) {
         try stdout.flush();
         const key = try readKey();
 
-        // Update visual cursor position to match user position
-        try cursor.moveTo(user.x, user.y);
-
-        try screen.refresh(user);
-        try draw.drawStatusBar(&screen, user);
-
+        // Process key input first
         if (user.currentMode == Mode.NOR and key == 'q') {
             running = false;
             try setRawMode(.off);
+            try clear();
             break;
         } else if (user.currentMode == Mode.NOR and key == 'i') {
             user.currentMode = Mode.INS;
-            try screen.refresh(user);
         } else if (user.currentMode == Mode.NOR and key == 'v') {
             user.currentMode = Mode.SEL;
-            try screen.refresh(user);
         } else if (user.currentMode == Mode.NOR and key == 'o') {
             user.currentMode = Mode.COM;
-            try screen.refresh(user);
         } else if (user.currentMode == Mode.COM and key == '\n') {
             user.currentMode = .NOR;
-            try screen.refresh(user);
         }
 
         if (key == '\x1b') {
@@ -199,7 +189,6 @@ pub fn main() !void {
                 // No more bytes waiting? This was a real ESC key press!
                 user.currentMode = .NOR;
                 try setRawMode(.on);
-                try screen.refresh(user);
             } else {
                 // More bytes are waiting! It's likely an arrow key sequence.
                 const second_byte = try readKey();
@@ -208,19 +197,15 @@ pub fn main() !void {
                     switch (third_byte) {
                         'A' => {
                             try user.moveUp();
-                            try screen.refresh(user);
                         },
                         'B' => {
                             try user.moveDown();
-                            try screen.refresh(user);
                         },
                         'C' => {
                             try user.moveRight();
-                            try screen.refresh(user);
                         },
                         'D' => {
                             try user.moveLeft();
-                            try screen.refresh(user);
                         },
                         else => {},
                     }
@@ -230,10 +215,13 @@ pub fn main() !void {
             try user.moveDown();
         } else if (user.currentMode == .NOR and key == 'k') {
             try user.moveUp();
-        } else if (user.currentMode == .NOR and key == 'l') {
-            try user.moveLeft();
         } else if (user.currentMode == .NOR and key == 'h') {
+            try user.moveLeft();
+        } else if (user.currentMode == .NOR and key == 'l') {
             try user.moveRight();
         }
+
+        // Refresh screen after processing all input
+        try screen.refresh(user);
     }
 }
