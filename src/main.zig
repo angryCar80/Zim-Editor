@@ -165,6 +165,7 @@ pub fn main() !void {
             break;
         } else if (user.currentMode == Mode.NOR and key == 'i') {
             user.currentMode = Mode.INS;
+            continue;
         } else if (user.currentMode == Mode.NOR and key == 'v') {
             user.currentMode = Mode.SEL;
         } else if (user.currentMode == Mode.NOR and key == ':') {
@@ -175,12 +176,19 @@ pub fn main() !void {
 
         // Checking for some Vim Keys stuff
         if (user.currentMode == Mode.NOR and key == 'o') {
-            // TODO Make A new Line
-            try user.moveDown();
+            // Insert new line below current line and enter insert mode
+            if (user.buffer) |*buf| {
+                try buf.insertEmptyLineBelow(user.y);
+                user.y += 1;
+                user.x = 0;
+                user.currentMode = Mode.INS;
+                continue;
+            }
         } else if (user.currentMode == Mode.NOR and key == 'a') {
             // TODO Make Enter Insert Mode To Next letter
             user.currentMode = Mode.INS;
             try user.moveRight();
+            continue;
         }
         if (key == '\x1b') {
             // We got an ESC byte. Now, is there more data waiting?
@@ -227,6 +235,24 @@ pub fn main() !void {
             try user.moveLeft();
         } else if (user.currentMode == .NOR and key == 'l') {
             try user.moveRight();
+        }
+
+        // Handle Insert mode typing
+        if (user.currentMode == .INS) {
+            if (key == 127 or key == 8) { // Backspace
+                // TODO: Implement backspace
+            } else if (key == '\r' or key == '\n') { // Enter
+                if (user.buffer) |*buf| {
+                    try buf.insertNewLine(user.y, user.x);
+                    user.y += 1;
+                    user.x = 0;
+                }
+            } else if (key >= 32 and key < 127) { // Printable ASCII
+                if (user.buffer) |*buf| {
+                    try buf.insertChar(user.y, user.x, key);
+                    user.x += 1;
+                }
+            }
         }
 
         // Refresh screen after processing all input

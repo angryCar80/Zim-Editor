@@ -133,6 +133,88 @@ pub const Buffer = struct {
 
         try file.writeAll(self.content);
     }
+
+    pub fn insertChar(self: *Buffer, line_num: usize, col: usize, char: u8) !void {
+        if (line_num >= self.lines.items.len) return;
+
+        const old_line = self.lines.items[line_num];
+        const new_len = old_line.len + 1;
+        const new_line = try self.allocator.alloc(u8, new_len);
+
+        // Copy before insertion point
+        @memcpy(new_line[0..col], old_line[0..col]);
+        // Insert character
+        new_line[col] = char;
+        // Copy after insertion point
+        if (col < old_line.len) {
+            @memcpy(new_line[col + 1 ..], old_line[col..]);
+        }
+
+        // Free old line and update
+        self.allocator.free(old_line);
+        self.lines.items[line_num] = new_line;
+
+        // Update content
+        try self.rebuildContent();
+    }
+
+    pub fn insertNewLine(self: *Buffer, line_num: usize, col: usize) !void {
+        if (line_num >= self.lines.items.len) return;
+
+        const old_line = self.lines.items[line_num];
+        const new_line_len = old_line.len - col;
+
+        // Create new line with content after cursor
+        const new_line = try self.allocator.alloc(u8, new_line_len);
+        if (new_line_len > 0) {
+            @memcpy(new_line, old_line[col..]);
+        }
+
+        // Truncate old line
+        const truncated_line = try self.allocator.alloc(u8, col);
+        @memcpy(truncated_line, old_line[0..col]);
+
+        self.allocator.free(old_line);
+        self.lines.items[line_num] = truncated_line;
+
+        // Insert new line after current
+        try self.lines.insert(self.allocator, line_num + 1, new_line);
+
+        // Update content
+        try self.rebuildContent();
+    }
+
+    pub fn insertEmptyLineBelow(self: *Buffer, line_num: usize) !void {
+        // Insert an empty line after the specified line
+        const empty_line = try self.allocator.alloc(u8, 0);
+        try self.lines.insert(self.allocator, line_num + 1, empty_line);
+        try self.rebuildContent();
+    }
+
+    fn rebuildContent(self: *Buffer) !void {
+        // Calculate total size needed
+        var total_size: usize = 0;
+        for (self.lines.items) |line| {
+            total_size += line.len + 1; // +1 for newline
+        }
+
+        // Free old content and allocate new
+        if (self.content.len > 0) {
+            self.allocator.free(self.content);
+        }
+        self.content = try self.allocator.alloc(u8, total_size);
+
+        // Build content
+        var pos: usize = 0;
+        for (self.lines.items) |line| {
+            @memcpy(self.content[pos .. pos + line.len], line);
+            pos += line.len;
+            if (pos < total_size) {
+                self.content[pos] = '\n';
+                pos += 1;
+            }
+        }
+    }
 };
 
 pub fn loadFile(allocator: std.mem.Allocator, file_path: []const u8) !Buffer {
