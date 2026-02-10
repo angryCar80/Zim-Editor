@@ -167,12 +167,21 @@ pub fn main() !void {
             user.currentMode = Mode.INS;
         } else if (user.currentMode == Mode.NOR and key == 'v') {
             user.currentMode = Mode.SEL;
-        } else if (user.currentMode == Mode.NOR and key == 'o') {
+        } else if (user.currentMode == Mode.NOR and key == ':') {
             user.currentMode = Mode.COM;
         } else if (user.currentMode == Mode.COM and key == '\n') {
             user.currentMode = .NOR;
         }
 
+        // Checking for some Vim Keys stuff
+        if (user.currentMode == Mode.NOR and key == 'o') {
+            // TODO Make A new Line
+            try user.moveDown();
+        } else if (user.currentMode == Mode.NOR and key == 'a') {
+            // TODO Make Enter Insert Mode To Next letter
+            user.currentMode = Mode.INS;
+            try user.moveRight();
+        }
         if (key == '\x1b') {
             // We got an ESC byte. Now, is there more data waiting?
             // We use a small timeout to see if '[' follows immediately (Arrow keys)
@@ -188,7 +197,6 @@ pub fn main() !void {
             if (ready == 0) {
                 // No more bytes waiting? This was a real ESC key press!
                 user.currentMode = .NOR;
-                try setRawMode(.on);
             } else {
                 // More bytes are waiting! It's likely an arrow key sequence.
                 const second_byte = try readKey();
