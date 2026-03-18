@@ -190,6 +190,26 @@ pub const Buffer = struct {
         try self.lines.insert(self.allocator, line_num + 1, empty_line);
         try self.rebuildContent();
     }
+    // Advanced Vim Keymaps
+    pub fn replaceChar(self: *Buffer, line_num: usize, col: usize, ch: u8) !void {
+        if (line_num >= self.lines.items.len) return;
+
+        const old_line = self.lines.items[line_num];
+
+        if (col >= old_line.len) {
+            try self.insertChar(line_num, col, ch);
+            return;
+        }
+
+        const new_line = try self.allocator.alloc(u8, old_line.len);
+        @memcpy(new_line, old_line);
+        new_line[col] = ch;
+
+        self.allocator.free(old_line);
+        self.lines.items[line_num] = new_line;
+
+        try self.rebuildContent();
+    }
 
     fn rebuildContent(self: *Buffer) !void {
         // Calculate total size needed
@@ -214,6 +234,31 @@ pub const Buffer = struct {
                 pos += 1;
             }
         }
+    }
+
+    pub fn removeChar(self: *Buffer, line_num: usize, col: usize) !bool {
+        if (line_num >= self.lines.items.len) return false;
+
+        const old_line = self.lines.items[line_num];
+
+        if (col >= old_line.len) return false;
+
+        const new_len = old_line.len - 1;
+        if (new_len == 0) {
+            self.allocator.free(old_line);
+            _ = self.lines.orderedRemove(line_num);
+            try self.rebuildContent();
+            return true;
+        }
+
+        const new_line = try self.allocator.alloc(u8, new_len);
+        @memcpy(new_line[0..col], old_line[0..col]);
+        @memcpy(new_line[col..], old_line[col + 1 ..]);
+
+        self.allocator.free(old_line);
+        self.lines.items[line_num] = new_line;
+        try self.rebuildContent();
+        return false;
     }
 };
 

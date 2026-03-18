@@ -2,7 +2,7 @@ const std = @import("std");
 
 const root = @import("root.zig"); // the core lib for the project
 const draw = @import("drawUi.zig"); // Drawing the user bar
-const file = @import("files.zig");
+const file = @import("files.zig"); // the main file saving file
 // Simple Imports
 const stdin = root.stdin;
 const stdout = root.stdout;
@@ -172,20 +172,23 @@ pub fn main() !void {
             user.currentMode = Mode.COM;
         } else if (user.currentMode == Mode.COM and key == '\n') {
             user.currentMode = .NOR;
-        }
+        } else if (user.currentMode == Mode.INS and key == '\x7f') {}
 
-        // Checking for some Vim Keys stuff
+        // Checking for some Vim Keys
         if (user.currentMode == Mode.NOR and key == 'o') {
             // Insert new line below current line and enter insert mode
+            try screen.refresh(user);
             if (user.buffer) |*buf| {
                 try buf.insertEmptyLineBelow(user.y);
                 user.y += 1;
                 user.x = 0;
                 user.currentMode = Mode.INS;
+                try screen.refresh(user);
                 continue;
             }
         } else if (user.currentMode == Mode.NOR and key == 'a') {
             // TODO Make Enter Insert Mode To Next letter
+            try screen.refresh(user);
             user.currentMode = Mode.INS;
             try user.moveRight();
             continue;
@@ -235,6 +238,14 @@ pub fn main() !void {
             try user.moveLeft();
         } else if (user.currentMode == .NOR and key == 'l') {
             try user.moveRight();
+        } // here starting the advanced vim key mpas
+        else if (user.currentMode == .NOR and key == 'r') {} else if (user.currentMode == .NOR and key == 'x') {
+            if (user.buffer) |*buf| {
+                const line_removed = try buf.removeChar(user.y, user.x);
+                if (line_removed and user.y > 0) {
+                    user.y -= 1;
+                }
+            }
         }
 
         // Handle Insert mode typing
