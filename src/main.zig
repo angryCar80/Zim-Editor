@@ -1,11 +1,8 @@
 const std = @import("std");
 
-const root = @import("root.zig"); // the core lib for the project
-const draw = @import("drawUi.zig"); // Drawing the user bar
-const file = @import("files.zig"); // the main file saving file
-// Simple Imports
-const stdin = root.stdin;
-const stdout = root.stdout;
+const root = @import("root.zig");
+const draw = @import("drawUi.zig");
+const file = @import("files.zig");
 const readKey = root.readKey;
 const setRawMode = root.setRawMode;
 const clear = root.clear;
@@ -41,20 +38,18 @@ pub const User = struct {
         }
     }
 
-    pub fn openFile(self: *User, allocator: std.mem.Allocator, file_path: []const u8) !void {
+    pub fn openFile(self: *User, allocator: std.mem.Allocator, io: std.Io, file_path: []const u8) !void {
         if (self.buffer) |*buf| {
             buf.deinit();
         }
 
-        self.buffer = file.loadFile(allocator, file_path) catch |err| switch (err) {
+        self.buffer = file.Buffer.init(allocator, io, file_path) catch |err| switch (err) {
             error.BinaryFile => {
-                try stdout.print("Error: Cannot open binary file '{s}'\n", .{file_path});
-                try stdout.flush();
+                try root.formatWrite(io, "Error: Cannot open binary file '{s}'\n", .{file_path});
                 return;
             },
             else => {
-                try stdout.print("Error loading file '{s}': {}\n", .{ file_path, err });
-                try stdout.flush();
+                try root.formatWrite(io, "Error loading file '{s}': {}\n", .{ file_path, err });
                 return;
             },
         };
@@ -63,11 +58,9 @@ pub const User = struct {
         self.y = 0;
     }
 
-    // USER METHODS
-    pub fn moveUp(self: *User) !void {
+    pub fn moveUp(self: *User) void {
         if (self.y > 0) {
             self.y -= 1;
-            // Adjust x position if new line is shorter
             if (self.buffer) |buf| {
                 if (buf.getLine(self.y)) |line| {
                     if (self.x > line.len) {
@@ -77,11 +70,10 @@ pub const User = struct {
             }
         }
     }
-    pub fn moveDown(self: *User) !void {
+    pub fn moveDown(self: *User) void {
         if (self.buffer) |buf| {
             if (self.y < buf.getLineCount() - 1) {
                 self.y += 1;
-                // Adjust x position if new line is shorter
                 if (buf.getLine(self.y)) |line| {
                     if (self.x > line.len) {
                         self.x = line.len;
@@ -90,24 +82,22 @@ pub const User = struct {
             }
         }
     }
-    pub fn moveRight(self: *User) !void {
+    pub fn moveRight(self: *User) void {
         if (self.buffer) |buf| {
             if (buf.getLine(self.y)) |line| {
                 if (self.x < line.len) {
                     self.x += 1;
                 } else if (self.x == line.len and self.y < buf.getLineCount() - 1) {
-                    // Move to next line if at end of current line
                     self.y += 1;
                     self.x = 0;
                 }
             }
         }
     }
-    pub fn moveLeft(self: *User) !void {
+    pub fn moveLeft(self: *User) void {
         if (self.x > 0) {
             self.x -= 1;
         } else if (self.y > 0) {
-            // Move to end of previous line if at start of current line
             if (self.buffer) |buf| {
                 if (buf.getLine(self.y - 1)) |line| {
                     self.y -= 1;
@@ -117,51 +107,42 @@ pub const User = struct {
         }
     }
 
-    pub fn moveToStart(self: *User) !void {
+    pub fn moveToStart(self: *User) void {
         self.x = 0;
         self.y = 0;
     }
 };
 
-const term_size = root.getTermSize(0);
+pub fn main(init: std.process.Init) !void {
+    const io = init.io;
+    const gpa = init.gpa;
+    const args = try init.minimal.args.toSlice(init.arena.allocator());
 
-pub fn main() !void {
-    const args = try std.process.argsAlloc(std.heap.page_allocator);
-    defer std.process.argsFree(std.heap.page_allocator, args);
-
-    try clear();
+    try clear(io);
     try setRawMode(.on);
-    try stdout.flush();
 
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gpa.deinit();
-    const allocator = gpa.allocator();
-    var screen = try root.Screen.init(allocator);
+    var screen = try root.Screen.init(gpa, io);
 
     var user = User.init();
     defer user.deinit();
 
-    // Load file from command line argument or default to test.txt
     if (args.len > 1) {
-        try user.openFile(allocator, args[1]);
-        try user.moveToStart();
+        try user.openFile(gpa, io, args[1]);
+        user.moveToStart();
     } else {
-        try user.openFile(allocator, "src/test.txt");
+        try user.openFile(gpa, io, "src/test.txt");
     }
 
-    // Initial refresh to show file content and position cursor
     try screen.refresh(user);
 
     var running: bool = true;
     while (running) {
-        try stdout.flush();
-        const key = try readKey();
+        const key = try readKey(io);
 
-        // Process key input first
         if (user.currentMode == Mode.NOR and key == 'q') {
             running = false;
             try setRawMode(.off);
-            try clear();
+            try clear(io);
             break;
         } else if (user.currentMode == Mode.NOR and key == 'i') {
             user.currentMode = Mode.INS;
@@ -174,9 +155,7 @@ pub fn main() !void {
             user.currentMode = .NOR;
         } else if (user.currentMode == Mode.INS and key == '\x7f') {}
 
-        // Checking for some Vim Keys
         if (user.currentMode == Mode.NOR and key == 'o') {
-            // Insert new line below current line and enter insert mode
             try screen.refresh(user);
             if (user.buffer) |*buf| {
                 try buf.insertEmptyLineBelow(user.y);
@@ -187,59 +166,44 @@ pub fn main() !void {
                 continue;
             }
         } else if (user.currentMode == Mode.NOR and key == 'a') {
-            // TODO Make Enter Insert Mode To Next letter
             try screen.refresh(user);
             user.currentMode = Mode.INS;
-            try user.moveRight();
+            user.moveRight();
             continue;
         }
         if (key == '\x1b') {
-            // We got an ESC byte. Now, is there more data waiting?
-            // We use a small timeout to see if '[' follows immediately (Arrow keys)
             var poll_fds = [_]std.os.linux.pollfd{.{
-                .fd = std.fs.File.stdin().handle,
+                .fd = 0,
                 .events = std.os.linux.POLL.IN,
                 .revents = 0,
             }};
 
-            // Wait for 0 milliseconds (instant check)
             const ready = std.os.linux.poll(&poll_fds, 0, 1);
 
             if (ready == 0) {
-                // No more bytes waiting? This was a real ESC key press!
                 user.currentMode = .NOR;
             } else {
-                // More bytes are waiting! It's likely an arrow key sequence.
-                const second_byte = try readKey();
+                const second_byte = try readKey(io);
                 if (second_byte == '[') {
-                    const third_byte = try readKey();
+                    const third_byte = try readKey(io);
                     switch (third_byte) {
-                        'A' => {
-                            try user.moveUp();
-                        },
-                        'B' => {
-                            try user.moveDown();
-                        },
-                        'C' => {
-                            try user.moveRight();
-                        },
-                        'D' => {
-                            try user.moveLeft();
-                        },
+                        'A' => user.moveUp(),
+                        'B' => user.moveDown(),
+                        'C' => user.moveRight(),
+                        'D' => user.moveLeft(),
                         else => {},
                     }
                 }
             }
         } else if (user.currentMode == .NOR and key == 'j') {
-            try user.moveDown();
+            user.moveDown();
         } else if (user.currentMode == .NOR and key == 'k') {
-            try user.moveUp();
+            user.moveUp();
         } else if (user.currentMode == .NOR and key == 'h') {
-            try user.moveLeft();
+            user.moveLeft();
         } else if (user.currentMode == .NOR and key == 'l') {
-            try user.moveRight();
-        } // here starting the advanced vim key mpas
-        else if (user.currentMode == .NOR and key == 'r') {} else if (user.currentMode == .NOR and key == 'x') {
+            user.moveRight();
+        } else if (user.currentMode == .NOR and key == 'r') {} else if (user.currentMode == .NOR and key == 'x') {
             if (user.buffer) |*buf| {
                 const line_removed = try buf.removeChar(user.y, user.x);
                 if (line_removed and user.y > 0) {
@@ -248,17 +212,14 @@ pub fn main() !void {
             }
         }
 
-        // Handle Insert mode typing
         if (user.currentMode == .INS) {
-            if (key == 127 or key == 8) { // Backspace
-                // TODO: Implement backspace
-            } else if (key == '\r' or key == '\n') { // Enter
+            if (key == 127 or key == 8) {} else if (key == '\r' or key == '\n') {
                 if (user.buffer) |*buf| {
                     try buf.insertNewLine(user.y, user.x);
                     user.y += 1;
                     user.x = 0;
                 }
-            } else if (key >= 32 and key < 127) { // Printable ASCII
+            } else if (key >= 32 and key < 127) {
                 if (user.buffer) |*buf| {
                     try buf.insertChar(user.y, user.x, key);
                     user.x += 1;
@@ -266,7 +227,6 @@ pub fn main() !void {
             }
         }
 
-        // Refresh screen after processing all input
         try screen.refresh(user);
     }
 }
